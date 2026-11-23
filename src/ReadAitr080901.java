@@ -1,24 +1,32 @@
+import java.io.Console;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.util.Properties;
 
 /**
- * Test program: reads 100 rows from NEWSYSGEN.AITR080901 on an IBM i (DB2 for i)
- * and prints every column to the console.
+ * Test program: reads rows from a DB2 for i table and prints every column to the console.
  *
  * Usage: java -cp lib\jt400.jar;classes ReadAitr080901 [startRow]
  *   startRow - optional 1-based row position to start from (default 1)
  *
- * Credentials come from environment variables AS400_USER and AS400_PASSWORD.
+ * Settings: each value is taken from the environment variable first, then from
+ * db.properties (or the file named by -Dconfig=path), then the built-in default.
+ *
+ *   env var       property      default
+ *   DB_HOST       db.host       172.16.0.21
+ *   DB_LIBRARY    db.library    NEWSYSGEN
+ *   DB_TABLE      db.table      AITR080901
+ *   DB_ROWS       db.rows       100
+ *   DB_USER       db.user       (prompted if missing)
+ *   DB_PASSWORD   db.password   (prompted if missing)
  */
 public class ReadAitr080901 {
-
-    private static final String HOST    = "172.16.0.21";
-    private static final String LIBRARY = "NEWSYSGEN";
-    private static final String TABLE   = "AITR080901";
-    private static final int    ROWS    = 100;
 
     public static void main(String[] args) throws Exception {
         long startRow = 1;
@@ -35,38 +43,60 @@ public class ReadAitr080901 {
             }
         }
 
-        String user = System.getenv("AS400_USER");
-        String pass = System.getenv("AS400_PASSWORD");
-        if (user == null || user.isEmpty() || pass == null || pass.isEmpty()) {
-            System.err.println("Set AS400_USER and AS400_PASSWORD environment variables.");
+        Properties p = loadProperties(System.getProperty("config", "db.properties"));
+
+        String host    = setting(p, "DB_HOST",     "db.host",     "172.16.0.21");
+        String library = setting(p, "DB_LIBRARY",  "db.library",  "NEWSYSGEN");
+        String table   = setting(p, "DB_TABLE",    "db.table",    "AITR080901");
+        String user    = setting(p, "DB_USER",     "db.user",     null);
+        String pw      = setting(p, "DB_PASSWORD", "db.password", null);
+        int rows;
+        try {
+            rows = Integer.parseInt(setting(p, "DB_ROWS", "db.rows", "100"));
+        } catch (NumberFormatException e) {
+            System.err.println("db.rows / DB_ROWS must be a number.");
+            System.exit(2);
+            return;
+        }
+
+        Console console = System.console();
+        if (isBlank(user) && console != null) {
+            user = console.readLine("IBM i user: ");
+        }
+        if (isBlank(pw) && console != null) {
+            char[] c = console.readPassword("IBM i password: ");
+            pw = (c == null) ? null : new String(c);
+        }
+        if (isBlank(user) || isBlank(pw)) {
+            System.err.println("No user/password: set DB_USER/DB_PASSWORD or db.user/db.password in db.properties.");
             System.exit(2);
         }
 
-        long endRow = startRow + ROWS - 1;
+        long endRow = startRow + rows - 1;
 
         // prompt=false: never pop up the JTOpen sign-on dialog
         // naming=sql: LIBRARY.TABLE syntax
-        String url = "jdbc:as400://" + HOST
-                + ";naming=sql;libraries=" + LIBRARY
+        String url = "jdbc:as400://" + host
+                + ";naming=sql;libraries=" + library
                 + ";prompt=false;translate binary=true;errors=full";
 
         // ROW_NUMBER() works on older IBM i releases (V5R4+), unlike OFFSET/FETCH (7.1 TR11+)
         String sql = "SELECT * FROM ("
                 + " SELECT T.*, ROW_NUMBER() OVER () AS ZZ_ROWNUM"
-                + " FROM " + LIBRARY + "." + TABLE + " T"
+                + " FROM " + library + "." + table + " T"
                 + ") X WHERE ZZ_ROWNUM BETWEEN ? AND ? ORDER BY ZZ_ROWNUM";
 
         Class.forName("com.ibm.as400.access.AS400JDBCDriver");
 
-        System.out.println("Connecting to " + HOST + " as " + user + " ...");
-        try (Connection conn = DriverManager.getConnection(url, user, pass);
+        System.out.println("Connecting to " + host + " as " + user + " ...");
+        try (Connection conn = DriverManager.getConnection(url, user, pw);
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             conn.setReadOnly(true);
             ps.setLong(1, startRow);
             ps.setLong(2, endRow);
 
-            System.out.println("Reading " + LIBRARY + "." + TABLE
+            System.out.println("Reading " + library + "." + table
                     + " rows " + startRow + " to " + endRow);
 
             try (ResultSet rs = ps.executeQuery()) {
@@ -104,6 +134,34 @@ public class ReadAitr080901 {
                 System.out.println(count + " row(s) read.");
             }
         }
+    }
+
+    /** Environment variable wins, then the properties file, then the default. */
+    private static String setting(Properties p, String envName, String propName, String def) {
+        String v = System.getenv().getOrDefault(envName, p.getProperty(propName, def));
+        if (isBlank(v)) {
+            // an env var that exists but is blank should not hide the properties value
+            v = p.getProperty(propName, def);
+        }
+        return isBlank(v) ? def : v.trim();
+    }
+
+    private static Properties loadProperties(String path) {
+        Properties p = new Properties();
+        File f = new File(path);
+        if (f.isFile()) {
+            try (InputStream in = new FileInputStream(f)) {
+                p.load(in);
+                System.out.println("Loaded settings from " + f.getAbsolutePath());
+            } catch (Exception e) {
+                System.err.println("Could not read " + f.getAbsolutePath() + ": " + e.getMessage());
+            }
+        }
+        return p;
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
     }
 
     private static String nvl(String s) {

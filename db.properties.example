@@ -1,0 +1,9 @@
+# Copy to db.properties and fill in. db.properties is git-ignored.
+# Environment variables (DB_HOST, DB_LIBRARY, DB_TABLE, DB_ROWS, DB_USER, DB_PASSWORD)
+# override these values when set.
+db.host=172.16.0.21
+db.library=NEWSYSGEN
+db.table=AITR080901
+db.rows=100
+db.user=
+db.password=
