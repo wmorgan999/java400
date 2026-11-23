@@ -23,6 +23,7 @@ import java.util.Properties;
  *   DB_LIBRARY    db.library    NEWSYSGEN
  *   DB_TABLE      db.table      AITR080901
  *   DB_ROWS       db.rows       100
+ *   DB_FORMAT     db.format     csv   (csv or tab)
  *   DB_USER       db.user       (prompted if missing)
  *   DB_PASSWORD   db.password   (prompted if missing)
  */
@@ -48,8 +49,8 @@ public class ReadAitr080901 {
         String host    = setting(p, "DB_HOST",     "db.host",     "172.16.0.21");
         String library = setting(p, "DB_LIBRARY",  "db.library",  "NEWSYSGEN");
         String table   = setting(p, "DB_TABLE",    "db.table",    "AITR080901");
-        String user    = setting(p, "DB_USER",     "db.user",     null);
-        String pw      = setting(p, "DB_PASSWORD", "db.password", null);
+        String user    = setting(p, "DB_USER",     "db.user",     "");
+        String pw      = setting(p, "DB_PASSWORD", "db.password", "");
         int rows;
         try {
             rows = Integer.parseInt(setting(p, "DB_ROWS", "db.rows", "100"));
@@ -71,6 +72,14 @@ public class ReadAitr080901 {
             System.err.println("No user/password: set DB_USER/DB_PASSWORD or db.user/db.password in db.properties.");
             System.exit(2);
         }
+
+        String format = setting(p, "DB_FORMAT", "db.format", "csv").toLowerCase();
+        if (!format.equals("csv") && !format.equals("tab")) {
+            System.err.println("db.format / DB_FORMAT must be csv or tab.");
+            System.exit(2);
+        }
+        boolean tab = format.equals("tab");
+        String sep = tab ? "\t" : ",";
 
         long endRow = startRow + rows - 1;
 
@@ -103,35 +112,45 @@ public class ReadAitr080901 {
                 ResultSetMetaData md = rs.getMetaData();
                 int cols = md.getColumnCount() - 1; // last column is ZZ_ROWNUM
 
-                // Column layout
-                System.out.println();
-                System.out.println("Columns (" + cols + "):");
+                // Column layout (to stderr, so "run.cmd > out.csv" captures only the data)
+                System.err.println();
+                System.err.println("Columns (" + cols + "):");
                 int nameWidth = 0;
                 for (int i = 1; i <= cols; i++) {
                     nameWidth = Math.max(nameWidth, md.getColumnName(i).length());
                 }
                 for (int i = 1; i <= cols; i++) {
-                    System.out.printf("  %3d  %-" + nameWidth + "s  %-10s %d,%d  %s%n",
+                    System.err.printf("  %3d  %-" + nameWidth + "s  %-10s %d,%d  %s%n",
                             i, md.getColumnName(i), md.getColumnTypeName(i),
                             md.getPrecision(i), md.getScale(i),
                             nvl(md.getColumnLabel(i)));
                 }
+                System.err.println();
+                System.err.flush();
 
-                // Rows
+                // Header line: ROW_NUM then the table's columns
+                StringBuilder line = new StringBuilder("ROW_NUM");
+                for (int i = 1; i <= cols; i++) {
+                    line.append(sep).append(field(md.getColumnName(i), tab));
+                }
+                System.out.println(line);
+
+                // One output line per table row
                 int count = 0;
                 while (rs.next()) {
                     count++;
-                    System.out.println();
-                    System.out.println("---- Row " + rs.getLong("ZZ_ROWNUM") + " ----");
+                    line.setLength(0);
+                    line.append(rs.getLong("ZZ_ROWNUM"));
                     for (int i = 1; i <= cols; i++) {
                         Object v = rs.getObject(i);
-                        String s = (v == null) ? "<null>" : "[" + v.toString() + "]";
-                        System.out.printf("  %-" + nameWidth + "s = %s%n", md.getColumnName(i), s);
+                        line.append(sep).append(v == null ? "" : field(rtrim(v.toString()), tab));
                     }
+                    System.out.println(line);
                 }
+                System.out.flush();
 
-                System.out.println();
-                System.out.println(count + " row(s) read.");
+                System.err.println();
+                System.err.println(count + " row(s) read.");
             }
         }
     }
@@ -158,6 +177,27 @@ public class ReadAitr080901 {
             }
         }
         return p;
+    }
+
+    /** CSV: quote when needed and double embedded quotes. Tab: replace tabs/newlines with spaces. */
+    private static String field(String s, boolean tab) {
+        if (tab) {
+            return s.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ');
+        }
+        if (s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0
+                || (!s.isEmpty() && (s.charAt(0) == ' ' || s.charAt(s.length() - 1) == ' '))) {
+            return "\"" + s.replace("\"", "\"\"") + "\"";
+        }
+        return s;
+    }
+
+    /** IBM i CHAR columns are blank-padded; drop the trailing blanks. */
+    private static String rtrim(String s) {
+        int end = s.length();
+        while (end > 0 && s.charAt(end - 1) == ' ') {
+            end--;
+        }
+        return s.substring(0, end);
     }
 
     private static boolean isBlank(String s) {

@@ -5,5 +5,7 @@ db.host=172.16.0.21
 db.library=NEWSYSGEN
 db.table=AITR080901
 db.rows=100
+# csv or tab
+db.format=csv
 db.user=
 db.password=
