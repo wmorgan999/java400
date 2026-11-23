@@ -1,4 +1,7 @@
+import java.io.BufferedReader;
 import java.io.Console;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
@@ -60,13 +63,23 @@ public class ReadAitr080901 {
             return;
         }
 
+        // Prompt for anything still missing. System.console() is null inside Eclipse
+        // (and when input is redirected), so fall back to reading standard input there.
         Console console = System.console();
-        if (isBlank(user) && console != null) {
-            user = console.readLine("IBM i user: ");
+        BufferedReader stdin = (console == null)
+                ? new BufferedReader(new InputStreamReader(System.in)) : null;
+        if (isBlank(user)) {
+            user = (console != null) ? console.readLine("IBM i user: ")
+                                     : promptLine(stdin, "IBM i user: ");
         }
-        if (isBlank(pw) && console != null) {
-            char[] c = console.readPassword("IBM i password: ");
-            pw = (c == null) ? null : new String(c);
+        if (isBlank(pw)) {
+            if (console != null) {
+                char[] c = console.readPassword("IBM i password: ");
+                pw = (c == null) ? null : new String(c);
+            } else {
+                // no real terminal, so the password will be visible as it is typed
+                pw = promptLine(stdin, "IBM i password (visible): ");
+            }
         }
         if (isBlank(user) || isBlank(pw)) {
             System.err.println("No user/password: set DB_USER/DB_PASSWORD or db.user/db.password in db.properties.");
@@ -198,6 +211,17 @@ public class ReadAitr080901 {
             end--;
         }
         return s.substring(0, end);
+    }
+
+    private static String promptLine(BufferedReader in, String prompt) {
+        System.out.print(prompt);
+        System.out.flush();
+        try {
+            String s = in.readLine();
+            return (s == null) ? null : s.replace("﻿", "").trim();
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     private static boolean isBlank(String s) {
